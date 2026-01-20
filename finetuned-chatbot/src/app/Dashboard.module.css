@@ -1,0 +1,357 @@
+
+.app {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #0a1628 0%, #1a2642 100%);
+  padding-bottom: 80px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem 2rem;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.logoIcon {
+  width: 40px;
+  height: 40px;
+  background: linear-gradient(135deg, #3b82f6, #06b6d4);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 1.5rem;
+  color: #fff;
+}
+
+.logoText {
+  font-size: 1.5rem;
+  font-weight: 300;
+  color: #fff;
+}
+
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.telegramStatus {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.5rem 1rem;
+  border-radius: 20px;
+  font-size: 0.9rem;
+  color: #fff;
+}
+
+.userAvatar {
+  width: 40px;
+  height: 40px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+}
+
+.userAvatar svg {
+  width: 24px;
+  height: 24px;
+}
+
+.mainContent {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.healthScore {
+  text-align: center;
+  margin-bottom: 3rem;
+}
+
+.scoreRing {
+  position: relative;
+  width: 280px;
+  height: 280px;
+  margin: 0 auto 1.5rem;
+}
+
+.ringSvg {
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 0 30px rgba(74, 222, 128, 0.5));
+}
+
+.scoreContent {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+}
+
+.scoreNumber {
+  font-size: 4rem;
+  font-weight: bold;
+  background: linear-gradient(135deg, #4ade80, #3b82f6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.scoreLabel {
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.7);
+  margin-top: 0.5rem;
+}
+
+.scoreStatus {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #4ade80;
+}
+
+.stabilityMessage {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 1rem;
+}
+
+.fuelGauge {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 16px;
+  padding: 2rem;
+  margin-bottom: 2rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.gaugeHeader {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.gaugeTitle {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.gaugeAmount {
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: #fff;
+}
+
+.gaugeBar {
+  height: 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 1rem;
+}
+
+.gaugeFill {
+  height: 100%;
+  background: linear-gradient(90deg, #06b6d4 0%, #f97316 100%);
+  border-radius: 6px;
+  transition: width 0.3s ease;
+}
+
+.gaugeLabels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.7);
+  margin-bottom: 1rem;
+}
+
+.gaugeLeft,
+.gaugeCenter,
+.gaugeRight {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.gaugeTime {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.85rem;
+}
+
+.todaysActivity,
+.categoryBreakdown {
+  margin-bottom: 2rem;
+}
+
+.sectionTitle {
+  font-size: 1.3rem;
+  margin-bottom: 1.5rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.activityCards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.activityCard {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 1.5rem;
+  display: flex;
+  gap: 1rem;
+}
+
+.activityIcon {
+  font-size: 2.5rem;
+}
+
+.activityDetails {
+  flex: 1;
+}
+
+.activityName {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  color: #fff;
+}
+
+.activityAmount {
+  font-size: 1.3rem;
+  color: #3b82f6;
+  font-weight: bold;
+  margin-bottom: 0.5rem;
+}
+
+.activityCategory {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.breakdownCards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+}
+
+.breakdownCard {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 1.5rem;
+  display: flex;
+  gap: 1rem;
+}
+
+.breakdownIcon {
+  font-size: 2rem;
+}
+
+.breakdownDetails {
+  flex: 1;
+}
+
+.breakdownHeader {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.breakdownName {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.breakdownAmount {
+  font-size: 1.1rem;
+  color: #3b82f6;
+  font-weight: bold;
+}
+
+.breakdownBar {
+  height: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.breakdownFill {
+  height: 100%;
+  background: linear-gradient(90deg, #4ade80, #3b82f6);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.fab {
+  position: fixed;
+  bottom: 100px;
+  right: 2rem;
+  width: 60px;
+  height: 60px;
+  background: linear-gradient(135deg, #3b82f6, #06b6d4);
+  border: none;
+  border-radius: 50%;
+  color: white;
+  cursor: pointer;
+  box-shadow: 0 4px 20px rgba(59, 130, 246, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s;
+}
+
+.fab:hover {
+  transform: scale(1.1);
+}
+
+.bottomNav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(10, 22, 40, 0.95);
+  backdrop-filter: blur(10px);
+  padding: 1rem;
+  display: flex;
+  justify-content: center;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.navIcon {
+  font-size: 1.5rem;
+  opacity: 0.6;
+}
+
+@media (max-width: 768px) {
+  .header {
+    padding: 1rem;
+  }
+
+  .mainContent {
+    padding: 1rem;
+  }
+
+  .activityCards,
+  .breakdownCards {
+    grid-template-columns: 1fr;
+  }
+
+  .fab {
+    bottom: 80px;
+    right: 1rem;
+  }
+}
