@@ -23,6 +23,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 const transactionsRouter = require('./routes/transactions');
 const authRouter = require('./routes/auth');
 const aiRouter = require('./routes/ai');
+const telegramRouter = require('./routes/telegram');
 
 app.use((req, res, next) => {
   req.supabase = supabase;
@@ -32,6 +33,7 @@ app.use((req, res, next) => {
 app.use('/api/auth', authRouter);
 app.use('/api/transactions', transactionsRouter);
 app.use('/api/ai', aiRouter);
+app.use('/api/telegram', telegramRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {

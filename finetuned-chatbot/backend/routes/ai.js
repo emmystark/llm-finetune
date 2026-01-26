@@ -13,19 +13,19 @@ router.post('/analyze-receipt', async (req, res) => {
     if (!userId) {
       return res.status(401).json({ error: 'User ID required' });
     }
-
     const { imageUrl, imageBase64 } = req.body;
     if (!imageUrl && !imageBase64) {
       return res.status(400).json({ error: 'Image URL or base64 required' });
     }
-
     const image = imageBase64 || imageUrl;
     const extractedData = await parseReceipt(image);
-
     res.json({
       success: true,
-      data: extractedData,
-      message: 'Receipt analyzed successfully'
+      merchant: extractedData.merchant,
+      amount: extractedData.amount,
+      date: extractedData.date,
+      description: extractedData.description,
+      category: extractedData.category
     });
   } catch (error) {
     console.error('Error analyzing receipt:', error);
@@ -40,14 +40,11 @@ router.post('/categorize', async (req, res) => {
     if (!userId) {
       return res.status(401).json({ error: 'User ID required' });
     }
-
     const { merchant, amount, description } = req.body;
     if (!merchant || amount === undefined) {
       return res.status(400).json({ error: 'Merchant and amount required' });
     }
-
     const category = await categorizeTransaction(merchant, description);
-
     res.json({
       success: true,
       category,
@@ -68,18 +65,14 @@ router.get('/spending-analysis', async (req, res) => {
     if (!userId) {
       return res.status(401).json({ error: 'User ID required' });
     }
-
     // Get user's transactions for this month
     const { data: transactions, error } = await supabase
       .from('transactions')
       .select('*')
       .eq('user_id', userId)
       .gte('date', new Date(new Date().setDate(1)).toISOString());
-
     if (error) throw error;
-
     const analysis = await analyzeSpending(transactions);
-
     res.json({
       success: true,
       analysis,
@@ -98,19 +91,15 @@ router.post('/process-receipt', async (req, res) => {
     if (!userId) {
       return res.status(401).json({ error: 'User ID required' });
     }
-
     const { imageBase64, imageUrl } = req.body;
     if (!imageBase64 && !imageUrl) {
       return res.status(400).json({ error: 'Image URL or base64 required' });
     }
-
     // Step 1: Parse receipt
     const image = imageBase64 || imageUrl;
     const extractedData = await parseReceipt(image);
-
     // Step 2: Categorize
     const category = await categorizeTransaction(extractedData.merchant, '');
-
     // Step 3: Save to database
     const { data: transaction, error } = await supabase
       .from('transactions')
@@ -127,9 +116,7 @@ router.post('/process-receipt', async (req, res) => {
         }
       ])
       .select();
-
     if (error) throw error;
-
     res.json({
       success: true,
       transaction: transaction[0],
@@ -137,6 +124,128 @@ router.post('/process-receipt', async (req, res) => {
     });
   } catch (error) {
     console.error('Error processing receipt:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get AI financial tips based on expenses
+router.post('/get-tips', async (req, res) => {
+  try {
+    const userId = req.headers['user-id'];
+    if (!userId) {
+      return res.status(401).json({ error: 'User ID required' });
+    }
+    const { transactions, categoryTotals, totalSpent, monthlyIncome } = req.body;
+    if (!transactions || !categoryTotals) {
+      return res.status(400).json({ error: 'Transactions and categoryTotals required' });
+    }
+    const tips = [];
+    // Calculate metrics
+    const spendingRatio = monthlyIncome > 0 ? (totalSpent / monthlyIncome) * 100 : 0;
+    const numTransactions = transactions.length;
+    // Generate contextual tips
+    if (spendingRatio > 100) {
+      tips.push('You\'ve exceeded your monthly budget! Consider reducing discretionary spending immediately.');
+      tips.push('Try the 50/30/20 rule: 50% needs, 30% wants, 20% savings.');
+    } else if (spendingRatio > 80) {
+      tips.push('You\'re approaching your budget limit. Start being more selective with purchases.');
+      tips.push('Consider using the envelope method for categories you overspend in.');
+    } else if (spendingRatio < 40) {
+      tips.push('Great job! You\'re saving over 60% of your income. Keep this momentum!');
+      tips.push('Consider increasing your savings goal or investing the extra funds.');
+    }
+    // Category-specific tips
+    if (categoryTotals['Food'] && categoryTotals['Food'] > monthlyIncome * 0.2) {
+      tips.push('Food expenses are high. Try meal planning and cooking at home more often.');
+    }
+    if (categoryTotals['Entertainment'] && categoryTotals['Entertainment'] > monthlyIncome * 0.15) {
+      tips.push('Entertainment costs are climbing. Set a monthly entertainment budget and stick to it.');
+    }
+    if (categoryTotals['Transport'] && categoryTotals['Transport'] > monthlyIncome * 0.15) {
+      tips.push('Transport costs are significant. Consider carpooling or public transportation alternatives.');
+    }
+    if (categoryTotals['Shopping'] && categoryTotals['Shopping'] > monthlyIncome * 0.1) {
+      tips.push('Shopping expenses detected. Implement a "wait 24 hours" rule before non-essential purchases.');
+    }
+    // General tips
+    if (numTransactions < 5) {
+      tips.push('Log more transactions to get better personalized insights.');
+    }
+    if (numTransactions > 20) {
+      tips.push('Excellent tracking! You\'re building great financial awareness habits.');
+    }
+    // Default tips if none generated
+    if (tips.length === 0) {
+      tips.push('Your spending looks balanced. Keep monitoring and stay consistent!');
+      tips.push('Review your expenses weekly to maintain financial discipline.');
+      tips.push('Track your progress monthly and celebrate reaching savings goals.');
+    }
+    res.json({ tips });
+  } catch (error) {
+    console.error('Error generating tips:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Financial advisor chatbot - provides advice based on spending
+router.post('/chat', async (req, res) => {
+  const startTime = Date.now();
+  try {
+    const userId = req.headers['user-id'];
+    if (!userId) {
+      return res.status(401).json({ error: 'User ID required' });
+    }
+    const { message, transactions, monthlyIncome } = req.body;
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+    // Calculate spending summary
+    const totalSpent = transactions?.reduce((sum, t) => sum + Math.abs(t.amount), 0) || 0;
+    const spendingRatio = monthlyIncome > 0 ? (totalSpent / monthlyIncome) * 100 : 0;
+    const categoryTotals = {};
+    if (transactions) {
+      transactions.forEach(t => {
+        categoryTotals[t.category] = (categoryTotals[t.category] || 0) + Math.abs(t.amount);
+      });
+    }
+    // Build context for the advisor
+    const spendingContext = `
+User's Financial Context:
+- Monthly Income: ₦${monthlyIncome?.toLocaleString() || 'Unknown'}
+- Total Spent: ₦${totalSpent.toLocaleString()}
+- Spending Ratio: ${spendingRatio.toFixed(1)}%
+- Transactions: ${transactions?.length || 0}
+- Categories: ${Object.entries(categoryTotals).map(([cat, amt]) => `${cat}: ₦${amt.toLocaleString()}`).join(', ')}
+User Question: ${message}
+Provide financial advice as a professional advisor. Be concise, actionable, and specific to their spending patterns.`;
+    // Use HuggingFace text generation for financial advice
+    const { HfInference } = require('@huggingface/inference');
+    const hf = new HfInference(process.env.HF_TOKEN, {
+      endpointUrl: 'https://router.huggingface.co'
+    });
+    const response = await hf.textGeneration({
+      model: 'mistralai/Mistral-7B-Instruct-v0.2',
+      inputs: spendingContext,
+      parameters: {
+        max_new_tokens: 256,
+        temperature: 0.7,
+        top_p: 0.9,
+      }
+    });
+    const advice = response.generated_text || 'Unable to generate advice. Please try again.';
+    console.log(`[Opik Trace] User: ${userId}, Query: ${message}, Duration: ${Date.now() - startTime}ms`);
+    res.json({
+      success: true,
+      message: message,
+      advice: advice.trim(),
+      context: {
+        spendingRatio: spendingRatio.toFixed(1),
+        totalSpent,
+        monthlyIncome
+      }
+    });
+  } catch (error) {
+    console.error('Error in financial advisor:', error);
     res.status(500).json({ error: error.message });
   }
 });

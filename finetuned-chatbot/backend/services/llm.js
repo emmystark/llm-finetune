@@ -1,9 +1,10 @@
 const { HfInference } = require('@huggingface/inference');
 const dotenv = require('dotenv');
-
 dotenv.config();
 
-const hf = new HfInference(process.env.HF_TOKEN);
+const hf = new HfInference(process.env.HF_TOKEN, {
+  endpointUrl: 'https://router.huggingface.co'
+});
 
 // Categories for expense classification
 const CATEGORIES = ['Food', 'Transport', 'Entertainment', 'Shopping', 'Bills', 'Utilities', 'Health', 'Education', 'Other'];
@@ -26,47 +27,123 @@ async function parseReceipt(imageUrlOrBase64) {
   try {
     // Handle both URL and base64
     let imageData = imageUrlOrBase64;
-    
-    // If it's a base64 string, convert it to buffer for HF API
+    // If it's a base64 string, use it directly
     if (imageUrlOrBase64.startsWith('data:image')) {
       imageData = imageUrlOrBase64;
     }
-
-    // Use image-to-text to analyze receipt
-    const result = await hf.imageToText({
+    // Use document QA for specific extractions
+    const questions = {
+      merchant: 'What is the merchant name?',
+      amount: 'What is the total amount?',
+      date: 'What is the date?'
+    };
+    let merchant = '';
+    let amount = 0;
+    let date = new Date().toISOString();
+    for (const [key, question] of Object.entries(questions)) {
+      const qaResult = await hf.documentQuestionAnswering({
+        image: imageData,
+        question,
+        model: 'impira/layoutlm-document-qa'
+      });
+      if (qaResult.answer) {
+        if (key === 'merchant') merchant = qaResult.answer.trim();
+        if (key === 'amount') amount = parseFloat(qaResult.answer.replace(/[^0-9.]/g, '')) || 0;
+        if (key === 'date') date = qaResult.answer;
+      }
+    }
+    // Fallback to image-to-text for full description and refinements
+    const captionResult = await hf.imageToText({
       data: imageData,
-      model: 'Salesforce/blip-image-captioning-base'
+      model: 'Salesforce/blip2-opt-2.7b'
     });
-
-    const caption = result.generated_text || '';
-    
-    // Extract amount (look for currency patterns)
-    const amountMatch = caption.match(/[\$₦€]?\s*(\d+(?:[.,]\d{2})?)/);
-    const amount = amountMatch ? parseFloat(amountMatch[1].replace(',', '.')) : 0;
-
-    // Extract merchant name (usually first meaningful words)
-    const merchantMatch = caption.match(/^([A-Za-z\s&'-]+)/);
-    const merchant = merchantMatch ? merchantMatch[1].trim() : 'Unknown Merchant';
-
-    // Try to extract date
-    const dateMatch = caption.match(/(\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2})/);
-    const date = dateMatch ? dateMatch[1] : new Date().toISOString();
-
+    const caption = captionResult.generated_text || '';
+    console.log('Receipt extraction caption:', caption);
+    // Refine amount if not found
+    if (amount === 0) {
+      const amountPatterns = [
+        /[₦N]\s*([0-9]{1,10}(?:[.,][0-9]{1,2})?)/i,
+        /\$\s*([0-9]{1,10}(?:[.,][0-9]{1,2})?)/,
+        /€\s*([0-9]{1,10}(?:[.,][0-9]{1,2})?)/,
+        /total[:\s]+[₦N$€]?\s*([0-9]{1,10}(?:[.,][0-9]{1,2})?)/i,
+        /amount[:\s]+[₦N$€]?\s*([0-9]{1,10}(?:[.,][0-9]{1,2})?)/i,
+        /price[:\s]+[₦N$€]?\s*([0-9]{1,10}(?:[.,][0-9]{1,2})?)/i,
+        /-\s*[₦N]\s*([0-9]{1,10}(?:[.,][0-9]{1,2})?)/i,
+        /([0-9]{1,10}(?:[.,][0-9]{1,2})?)(?:\s*[₦N]|$)/
+      ];
+      for (const pattern of amountPatterns) {
+        const match = caption.match(pattern);
+        if (match && match[1]) {
+          amount = parseFloat(match[1].replace(/,/g, ''));
+          if (amount > 0) break;
+        }
+      }
+    }
+    // Refine merchant if not found
+    if (!merchant) {
+      const merchantPatterns = [
+        /^(OPay|PayStack|Flutterwave|Opay|Remita|Kuda|Interswitch|Paypal|Google|Apple|Amazon|Meta)/i,
+        /(?:merchant|establishment|store|shop|vendor|from):\s*([A-Za-z0-9\s&'.-]{2,60})/i,
+        /^([A-Za-z0-9\s&'.-]{3,60})(?:\s+(?:limited|ltd|inc|corporation|co|store|shop|market|station))?/i,
+        /([A-Za-z0-9\s&'.-]{3,60})\s*(?:receipt|invoice|bill|statement|transaction)/i,
+        /([A-Za-z0-9\s&'.-]{3,60})\s+(?:₦|N|\$|€|amount|total)/i,
+        /transaction\s+receipt.*?([A-Za-z0-9\s&'.-]{2,60})/i
+      ];
+      for (const pattern of merchantPatterns) {
+        const match = caption.match(pattern);
+        if (match && match[1]) {
+          merchant = match[1].trim().replace(/(?:receipt|invoice|bill|statement|limited|ltd|inc|transaction)/gi, '').trim();
+          if (merchant.length >= 2 && merchant.length <= 60) break;
+        }
+      }
+      if (!merchant && caption) {
+        const words = caption.split(/\s+/).filter(w => /^[A-Za-z]{2,}/.test(w));
+        if (words.length > 0) {
+          merchant = words[0];
+          if (words.length > 1 && ['data', 'bundle', 'plan', 'transfer', 'payment'].includes(words[0].toLowerCase())) {
+            merchant = words[1] || words[0];
+          }
+        }
+      }
+      merchant = merchant || 'Transaction';
+    }
+    // Refine date if not found
+    if (date === new Date().toISOString()) {
+      const datePatterns = [
+        /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*,?\s+\d{4})/i,
+        /(?:date|time):\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
+        /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/,
+        /(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})/
+      ];
+      for (const pattern of datePatterns) {
+        const match = caption.match(pattern);
+        if (match && match[1]) {
+          date = match[1];
+          break;
+        }
+      }
+    }
+    // Determine extraction confidence
+    const hasAmount = amount > 0;
+    const hasMerchant = merchant.length >= 2;
+    const confidence = (hasAmount && hasMerchant) ? 'high' : 'medium';
     return {
       success: true,
-      merchant: merchant.substring(0, 50), // Limit merchant name length
+      merchant,
       amount: Math.abs(amount),
       date,
       description: caption,
-      confidence: amount > 0 && merchant !== 'Unknown Merchant' ? 'high' : 'low'
+      confidence,
+      extracted_text: caption
     };
   } catch (error) {
     console.error('Receipt parsing error:', error);
     return {
       success: false,
       error: error.message,
-      merchant: 'Unknown',
-      amount: 0
+      merchant: '',
+      amount: 0,
+      description: 'Failed to parse receipt - model error'
     };
   }
 }
@@ -78,31 +155,28 @@ async function parseReceipt(imageUrlOrBase64) {
 async function categorizeTransaction(merchant, description = '') {
   try {
     const text = `${merchant} ${description}`.toLowerCase();
-
     // Keyword-based categorization (faster, more reliable)
     for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
       if (keywords.some(keyword => text.includes(keyword))) {
         return category;
       }
     }
-
-    // If no keyword match, try HF text classification
+    // If no keyword match, try HF zero-shot classification
     try {
-      const result = await hf.textClassification({
-        model: 'distilbert-base-uncased-finetuned-sst-2-english',
-        inputs: merchant
+      const result = await hf.zeroShotClassification({
+        model: 'facebook/bart-large-mnli',
+        inputs: text,
+        parameters: {
+          candidate_labels: CATEGORIES
+        }
       });
-      
-      // Map sentiment to category based on confidence
-      if (result[0]) {
-        const classification = result[0];
-        // Simple mapping: we'd need a fine-tuned model for best results
-        return 'Shopping'; // Default category if using general model
+      if (result.labels && result.scores) {
+        const topIndex = result.scores.indexOf(Math.max(...result.scores));
+        return result.labels[topIndex];
       }
     } catch (classifyError) {
       console.warn('Classification fallback to keyword matching:', classifyError.message);
     }
-
     // Default category
     return 'Other';
   } catch (error) {
@@ -126,11 +200,9 @@ async function analyzeSpending(transactions) {
         recommendation: 'Start tracking your expenses to get personalized insights'
       };
     }
-
     // Calculate metrics
     const totalSpent = transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0);
     const averageTransaction = totalSpent / transactions.length;
-    
     // Category breakdown
     const categoryBreakdown = {};
     transactions.forEach(t => {
@@ -139,15 +211,12 @@ async function analyzeSpending(transactions) {
       }
       categoryBreakdown[t.category] += Math.abs(t.amount);
     });
-
     const topCategory = Object.entries(categoryBreakdown).sort((a, b) => b[1] - a[1])[0]?.[0] || 'Other';
     const topCategoryAmount = categoryBreakdown[topCategory] || 0;
-
     // Generate insight
     let insight = '';
     let riskLevel = 'low';
     let recommendation = '';
-
     if (topCategoryAmount > totalSpent * 0.5) {
       insight = `${topCategory} represents over 50% of your spending. Consider budgeting this category.`;
       riskLevel = 'medium';
@@ -161,7 +230,6 @@ async function analyzeSpending(transactions) {
       riskLevel = 'low';
       recommendation = 'Keep up with your current spending habits';
     }
-
     return {
       totalSpent: Math.round(totalSpent),
       averageTransaction: Math.round(averageTransaction),
@@ -190,14 +258,11 @@ async function generateHealthReport(userProfile, transactions) {
     const monthlyIncome = userProfile.monthly_income || 0;
     const fixedBills = userProfile.fixed_bills || 0;
     const savingsGoal = userProfile.savings_goal || 0;
-
     const totalSpent = transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0);
     const remaining = monthlyIncome - totalSpent - fixedBills;
     const savingsPercentage = (remaining / monthlyIncome) * 100;
-
     let healthScore = 50; // Base score
     let status = 'Fair';
-
     if (savingsPercentage >= 20) {
       healthScore = 85;
       status = 'Excellent';
@@ -211,7 +276,6 @@ async function generateHealthReport(userProfile, transactions) {
       healthScore = 30;
       status = 'Poor';
     }
-
     return {
       healthScore,
       status,

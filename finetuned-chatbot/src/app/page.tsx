@@ -23,7 +23,7 @@ interface UserProfile {
   telegramUsername: string;
 }
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3000';
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://sentinel-backend-sepia.vercel.app';
 
 export default function Dashboard() {
   const [activeModal, setActiveModal] = useState<string | null>(null);
@@ -45,16 +45,201 @@ export default function Dashboard() {
     category: 'Food',
     date: 'Today'
   });
+  const [receiptImage, setReceiptImage] = useState<File | null>(null);
+  const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
+  const [scannedData, setScannedData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [userId] = useState('default-user');
   const [healthScore, setHealthScore] = useState(0);
   const [healthStatus, setHealthStatus] = useState('Building Profile');
+  const [aiTips, setAiTips] = useState<string[]>([]);
+  const [currentTipIndex, setCurrentTipIndex] = useState(0);
+  const [telegramVerified, setTelegramVerified] = useState(false);
+  const [telegramVerifying, setTelegramVerifying] = useState(false);
+  
+  // Chatbot state
+  const [chatMessages, setChatMessages] = useState<Array<{ role: string; content: string }>>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
 
   // Fetch transactions on mount
   useEffect(() => {
     fetchTransactions();
+    generateAiTips();
+    verifyTelegramConnection();
   }, []);
+
+  // Verify Telegram connection
+  const verifyTelegramConnection = async () => {
+    try {
+      setTelegramVerifying(true);
+      const data = await apiCall('/api/telegram/verify', 'GET');
+      setTelegramVerified(data.verified || false);
+      if (data.verified) {
+        setUserProfile(prev => ({
+          ...prev,
+          telegramConnected: true,
+          telegramUsername: data.username || prev.telegramUsername
+        }));
+      }
+    } catch (err) {
+      setTelegramVerified(false);
+      console.warn('Telegram not verified:', err);
+    } finally {
+      setTelegramVerifying(false);
+    }
+  };
+
+  // Generate AI tips based on expenses
+  const generateAiTips = async () => {
+    try {
+      if (transactions.length === 0) {
+        setAiTips(['Start logging expenses to get personalized financial tips!']);
+        return;
+      }
+
+      const categoryTotals = calculateCategoryTotals();
+      const response = await apiCall('/api/ai/get-tips', 'POST', {
+        transactions,
+        categoryTotals,
+        totalSpent: transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0),
+        monthlyIncome: userProfile.monthlyIncome
+      });
+
+      setAiTips(response.tips || ['Keep tracking your expenses!']);
+      setCurrentTipIndex(0);
+    } catch (err) {
+      console.error('Failed to generate tips:', err);
+      setAiTips(['Keep tracking your expenses for better insights!']);
+    }
+  };
+
+  // Financial advisor chatbot
+  const handleChatSubmit = async () => {
+    if (!chatInput.trim()) return;
+
+    const userMessage = chatInput;
+    setChatInput('');
+    setChatMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+    setChatLoading(true);
+
+    try {
+      const categoryTotals = calculateCategoryTotals();
+      const response = await apiCall('/api/ai/chat', 'POST', {
+        message: userMessage,
+        transactions,
+        monthlyIncome: userProfile.monthlyIncome
+      });
+
+      setChatMessages(prev => [...prev, { role: 'advisor', content: response.advice }]);
+    } catch (err) {
+      console.error('Failed to get advice:', err);
+      setChatMessages(prev => [...prev, { role: 'advisor', content: 'Sorry, I could not generate advice at this time. Please try again.' }]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  // Compress image before sending
+  const compressImage = (base64String: string): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = base64String;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d')!;
+        
+        // Reduce dimensions if image is too large
+        let width = img.width;
+        let height = img.height;
+        const maxWidth = 800;
+        const maxHeight = 800;
+        
+        if (width > maxWidth || height > maxHeight) {
+          const ratio = Math.min(maxWidth / width, maxHeight / height);
+          width = width * ratio;
+          height = height * ratio;
+        }
+        
+        canvas.width = width;
+        canvas.height = height;
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        // Compress to lower quality
+        const compressed = canvas.toDataURL('image/jpeg', 0.6);
+        resolve(compressed);
+      };
+    });
+  };
+
+  // Handle receipt image upload
+  const handleReceiptUpload = async (file: File) => {
+    setReceiptImage(file);
+    
+    // Create preview
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setReceiptPreview(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+
+    // Scan receipt
+    await scanReceipt(file);
+  };
+
+  // Scan receipt image using AI
+  const scanReceipt = async (file: File) => {
+    setLoading(true);
+    try {
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        let base64 = reader.result as string;
+        
+        // Compress image if it's too large
+        if (base64.length > 2000000) {
+          try {
+            base64 = await compressImage(base64);
+          } catch (err) {
+            console.warn('Image compression failed, using original');
+          }
+        }
+        
+        try {
+          const result = await apiCall('/api/ai/analyze-receipt', 'POST', {
+            imageBase64: base64
+          });
+
+          setScannedData(result);
+          
+          // Auto-fill form with scanned data
+          setNewTransaction(prev => ({
+            ...prev,
+            merchant: result.merchant || '',
+            amount: (result.amount && result.amount > 0) ? result.amount.toString() : '',
+            category: result.category || 'Food',
+            description: result.description || `Receipt scan - ${new Date().toLocaleString()}`
+          }));
+
+          // Only show error if both merchant AND amount failed to extract
+          if ((!result.merchant || result.merchant === 'Merchant') && result.amount === 0) {
+            setError('Receipt scanned but data unclear. Please fill in merchant name and amount manually.');
+          } else {
+            setError(null);
+          }
+        } catch (err) {
+          setError('Failed to scan receipt. Please fill in the details manually or try a clearer image.');
+          console.error('Scan error:', err);
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      setError('Error processing receipt');
+      console.error('Upload error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Calculate health score based on spending data
   const calculateHealthScore = (transactionList: Transaction[], income: number) => {
@@ -67,24 +252,42 @@ export default function Dashboard() {
     const totalSpent = transactionList.reduce((sum, t) => sum + Math.abs(t.amount), 0);
     const spendingRatio = income > 0 ? (totalSpent / income) * 100 : 0;
 
-    let score = 100;
-    let status = 'Excellent';
+    let score = 0;
+    let status = 'Building Profile';
 
     if (spendingRatio > 100) {
-      score = 20;
-      status = 'Critical';
+      score = 0;
+      status = 'Critical Overspend';
+    } else if (spendingRatio > 90) {
+      score = 10;
+      status = 'Severely Strained';
     } else if (spendingRatio > 80) {
-      score = 35;
-      status = 'Poor';
+      score = 20;
+      status = 'Heavily Burdened';
+    } else if (spendingRatio > 70) {
+      score = 30;
+      status = 'Significantly Stretched';
     } else if (spendingRatio > 60) {
-      score = 55;
-      status = 'Fair';
+      score = 40;
+      status = 'Noticeably Tight';
+    } else if (spendingRatio > 50) {
+      score = 50;
+      status = 'Moderate';
     } else if (spendingRatio > 40) {
-      score = 75;
-      status = 'Good';
-    } else {
+      score = 60;
+      status = 'Comfortable';
+    } else if (spendingRatio > 30) {
+      score = 70;
+      status = 'Healthy';
+    } else if (spendingRatio > 20) {
+      score = 80;
+      status = 'Very Healthy';
+    } else if (spendingRatio > 10) {
       score = 90;
       status = 'Excellent';
+    } else {
+      score = 100;
+      status = 'Outstanding';
     }
 
     setHealthScore(score);
@@ -239,11 +442,20 @@ export default function Dashboard() {
 
   const handleAddTransaction = async () => {
     setLoading(true);
+    setError('');
     try {
+      const merchant = newTransaction.merchant?.trim() || '';
       const amount = parseFloat(newTransaction.amount) || 0;
       
-      if (!newTransaction.merchant || !newTransaction.amount) {
-        setError('Please fill in merchant and amount');
+      // Validation: need both merchant and amount
+      if (!merchant) {
+        setError('Merchant name is required. Type or upload a receipt with it clearly visible.');
+        setLoading(false);
+        return;
+      }
+
+      if (!amount || amount <= 0) {
+        setError('Amount must be greater than 0. Type or upload a receipt with the amount clearly visible.');
         setLoading(false);
         return;
       }
@@ -252,7 +464,7 @@ export default function Dashboard() {
       let category = newTransaction.category;
       try {
         const categoryResult = await apiCall('/api/ai/categorize', 'POST', {
-          merchant: newTransaction.merchant,
+          merchant: merchant,
           description: newTransaction.description
         });
         category = categoryResult.category;
@@ -262,7 +474,7 @@ export default function Dashboard() {
 
       // Create transaction
       const transaction = await apiCall('/api/transactions', 'POST', {
-        merchant: newTransaction.merchant,
+        merchant: merchant,
         amount: Math.abs(amount),
         category,
         description: newTransaction.description,
@@ -309,13 +521,16 @@ export default function Dashboard() {
     <div className={styles.app}>
       <header className={styles.header}>
         <div className={styles.logo}>
-          <div className={styles.logoIcon}>S</div>
-          <span className={styles.logoText}>sentinel</span>
+          {/* <div className={styles.logoIcon}>S</div>
+          <span className={styles.logoText}>sentinel</span> */}
+          <img src="./logo.png" height={25} width={60} alt="" />
         </div>
         <div className={styles.headerRight}>
-          <div className={styles.telegramStatus}>
-            Telegram: Connected ✓
-          </div>
+          {telegramVerified && (
+            <div className={styles.telegramStatus}>
+              Telegram: Connected ✓
+            </div>
+          )}
           <div className={styles.userAvatar} onClick={() => openModal('profile')}>
             <svg viewBox="0 0 24 24" fill="currentColor">
               <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
@@ -376,6 +591,41 @@ export default function Dashboard() {
           </p>
         </div>
 
+        {/* AI Tips Section */}
+        {aiTips.length > 0 && (
+          <div style={{
+            marginTop: '20px',
+            padding: '15px',
+            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+            borderLeft: '4px solid #3b82f6',
+            borderRadius: '8px'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <h3 style={{ margin: 0, color: '#60a5fa', fontSize: '16px' }}>Financial Tip</h3>
+              <div style={{ display: 'flex', gap: '5px' }}>
+                <button
+                  onClick={() => setCurrentTipIndex((prev) => (prev - 1 + aiTips.length) % aiTips.length)}
+                  style={{ padding: '4px 8px', background: '#3b82f6', border: 'none', color: 'white', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
+                >
+                  ← Prev
+                </button>
+                <span style={{ color: '#888', fontSize: '12px', padding: '4px 8px' }}>
+                  {currentTipIndex + 1} / {aiTips.length}
+                </span>
+                <button
+                  onClick={() => setCurrentTipIndex((prev) => (prev + 1) % aiTips.length)}
+                  style={{ padding: '4px 8px', background: '#3b82f6', border: 'none', color: 'white', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
+            <p style={{ margin: 0, color: '#e0e7ff', lineHeight: '1.5' }}>
+              {aiTips[currentTipIndex]}
+            </p>
+          </div>
+        )}
+
         <div className={styles.fuelGauge}>
           <div className={styles.gaugeHeader}>
             <span className={styles.gaugeTitle}>Spending Overview</span>
@@ -387,10 +637,10 @@ export default function Dashboard() {
           <div className={styles.gaugeLabels}>
             <span className={styles.gaugeLeft}>₦{Math.max(0, remaining).toLocaleString()} Left</span>
             <span className={styles.gaugeCenter}>₦{totalSpent.toLocaleString()}</span>
-            <span className={styles.gaugeRight}>₦{dailyLimit.toLocaleString()} Goal</span>
+            <span className={styles.gaugeRight}>₦{userProfile.monthlyIncome.toLocaleString()} Goal</span>
           </div>
           <div className={styles.gaugeTime}>
-            <span>🕐 {new Date().toLocaleTimeString()} | {transactions.length} transaction{transactions.length !== 1 ? 's' : ''}</span>
+              <span>{new Date().toLocaleTimeString()} | {transactions.length} transaction{transactions.length !== 1 ? 's' : ''}</span>
           </div>
         </div>
 
@@ -470,7 +720,9 @@ export default function Dashboard() {
       </button>
 
       <div className={styles.bottomNav}>
-        {/* <div className={styles.navIcon} onClick={() => openModal('developer')}>👁️</div> */}
+        <div style={{ cursor: 'pointer', fontSize: '20px' }} onClick={() => openModal('chatbot')} title="Financial Advisor">
+         <img src="./image.png" width={60} height={20} alt="" />
+        </div>
       </div>
 
       {/* Profile & Settings Modal */}
@@ -494,7 +746,6 @@ export default function Dashboard() {
 
               <div className={styles.settingField}>
                 <label>
-                  <span className={styles.fieldIcon}>💰</span>
                   <span>Monthly Income: ₦{userProfile.monthlyIncome.toLocaleString()}</span>
                 </label>
                 <input 
@@ -509,7 +760,6 @@ export default function Dashboard() {
 
               <div className={styles.settingField}>
                 <label>
-                  <span className={styles.fieldIcon}>📄</span>
                   <span>Fixed Bills: ₦{userProfile.fixedBills.toLocaleString()}</span>
                 </label>
                 <input 
@@ -524,7 +774,6 @@ export default function Dashboard() {
 
               <div className={styles.settingField}>
                 <label>
-                  <span className={styles.fieldIcon}>🎯</span>
                   <span>Savings Goal: ₦{userProfile.savingsGoal.toLocaleString()}</span>
                 </label>
                 <input 
@@ -539,10 +788,31 @@ export default function Dashboard() {
 
               <div className={styles.telegramSection}>
                 <h4>Telegram Connection</h4>
-                <p className={styles.telegramConnectedText}>
-                  Connected as {userProfile.telegramUsername} ✅
-                </p>
-                <button className={styles.disconnectButton}>Disconnect</button>
+                {telegramVerified ? (
+                  <>
+                    <p className={styles.telegramConnectedText} style={{ color: '#4ade80' }}>
+                      Connected as {userProfile.telegramUsername}
+                    </p>
+                    <p style={{ fontSize: '13px', color: '#888' }}>Send transactions to your Telegram bot to auto-log expenses</p>
+                    <button className={styles.disconnectButton} onClick={() => setTelegramVerified(false)}>Disconnect</button>
+                  </>
+                ) : (
+                  <>
+                    <p style={{ color: '#fbbf24', fontSize: '14px' }}>
+                      Connect Telegram to log expenses via chat
+                    </p>
+                    <button 
+                      className={styles.analyzeButton}
+                      onClick={() => {
+                        // This would open Telegram bot link
+                        window.open('https://t.me/sentinel_finance_bot?start=connect', '_blank');
+                      }}
+                      disabled={telegramVerifying}
+                    >
+                      {telegramVerifying ? 'Verifying...' : 'Connect Telegram'}
+                    </button>
+                  </>
+                )}
               </div>
 
               <button className={styles.saveButton} onClick={closeModal}>Save Changes</button>
@@ -685,17 +955,59 @@ export default function Dashboard() {
       {/* Add Transaction Modal */}
       {activeModal === 'add' && (
         <div className={styles.modalOverlay} onClick={closeModal}>
-          <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
+          <div className={`${styles.modal} ${styles.wideModal}`} onClick={(e) => e.stopPropagation()}>
             <div className={styles.modalHeader}>
               <h2>Add Transaction</h2>
               <button className={styles.closeButton} onClick={closeModal}>✕</button>
             </div>
             <div className={styles.modalBody}>
+              {/* Receipt Upload Section */}
+              <div style={{ marginBottom: '20px', padding: '15px', backgroundColor: 'rgba(74, 222, 128, 0.1)', borderRadius: '8px', border: '2px dashed #4ade80' }}>
+                <h3 style={{ marginTop: 0, color: '#4ade80' }}>Scan Receipt (Optional)</h3>
+                <p style={{ fontSize: '14px', color: '#aaa' }}>Upload a bank receipt or receipt image - AI will extract merchant, amount, and category</p>
+                
+                {receiptPreview && (
+                  <div style={{ marginBottom: '15px' }}>
+                    <img src={receiptPreview} alt="Receipt" style={{ maxWidth: '200px', maxHeight: '200px', borderRadius: '8px', border: '1px solid #4ade80' }} />
+                    <button 
+                      onClick={() => { setReceiptImage(null); setReceiptPreview(null); setScannedData(null); }}
+                      style={{ marginLeft: '10px', padding: '6px 12px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                )}
+
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => e.target.files && handleReceiptUpload(e.target.files[0])}
+                  style={{ padding: '10px', borderRadius: '4px', border: '1px solid #4ade80', cursor: 'pointer' }}
+                />
+
+                {scannedData && (
+                  <div style={{ marginTop: '10px', padding: '10px', backgroundColor: '#1e293b', borderRadius: '4px', fontSize: '13px', color: '#a1f265' }}>
+                    Receipt scanned! Fields auto-filled below.
+                  </div>
+                )}
+
+                {loading && (
+                  <div style={{ marginTop: '10px', padding: '10px', backgroundColor: '#1e293b', borderRadius: '4px', fontSize: '13px', color: '#fbbf24' }}>
+                    Scanning receipt...
+                  </div>
+                )}
+              </div>
+
+              {/* Or Manual Entry Section */}
+              <div style={{ marginBottom: '10px', padding: '10px 0', textAlign: 'center', color: '#888', fontSize: '14px' }}>
+                — OR ENTER MANUALLY —
+              </div>
+
               <div className={styles.textareaGroup}>
                 <textarea 
                   className={styles.textarea} 
-                  placeholder="e.g., 'Spent 5k on fuel'"
-                  rows={4}
+                  placeholder="e.g., 'Spent 5k on fuel at Shell gas station'"
+                  rows={3}
                   value={newTransaction.description}
                   onChange={(e) => setNewTransaction({...newTransaction, description: e.target.value})}
                 />
@@ -744,8 +1056,82 @@ export default function Dashboard() {
               </div>
 
               <button className={styles.analyzeButton} onClick={handleAddTransaction} disabled={loading}>
-                {loading ? 'Adding...' : 'Analyze & Log'}
+                {loading ? 'Processing...' : 'Analyze & Log'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Financial Advisor Chatbot Modal */}
+      {activeModal === 'chatbot' && (
+        <div className={styles.modalOverlay} onClick={closeModal}>
+          <div className={`${styles.modal} ${styles.wideModal}`} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <h2>Financial Advisor</h2>
+              <button className={styles.closeButton} onClick={closeModal}>✕</button>
+            </div>
+            <div className={styles.modalBody} style={{ display: 'flex', flexDirection: 'column', height: '400px' }}>
+              <div style={{ flex: 1, overflowY: 'auto', marginBottom: '15px', padding: '10px', backgroundColor: '#1a1f2e', borderRadius: '8px' }}>
+                {chatMessages.length === 0 ? (
+                  <div style={{ color: '#888', textAlign: 'center', paddingTop: '20px' }}>
+                    <p>Start a conversation about your finances!</p>
+                    <p style={{ fontSize: '12px' }}>Ask about budgeting, saving, or spending advice.</p>
+                  </div>
+                ) : (
+                  chatMessages.map((msg, idx) => (
+                    <div key={idx} style={{ marginBottom: '10px', display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
+                      <div style={{
+                        maxWidth: '70%',
+                        padding: '10px 12px',
+                        borderRadius: '8px',
+                        backgroundColor: msg.role === 'user' ? '#3b82f6' : '#374151',
+                        color: '#fff',
+                        fontSize: '14px',
+                        lineHeight: '1.4'
+                      }}>
+                        {msg.content}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  type="text"
+                  placeholder="Ask for financial advice..."
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleChatSubmit()}
+                  disabled={chatLoading}
+                  style={{
+                    flex: 1,
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    backgroundColor: '#2d3748',
+                    color: '#fff',
+                    fontSize: '14px'
+                  }}
+                />
+                <button
+                  onClick={handleChatSubmit}
+                  disabled={chatLoading || !chatInput.trim()}
+                  style={{
+                    padding: '10px 16px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    backgroundColor: chatLoading ? '#4b5563' : '#3b82f6',
+                    color: '#fff',
+                    cursor: chatLoading ? 'not-allowed' : 'pointer',
+                    fontSize: '14px',
+                    fontWeight: 'bold'
+                  }}
+                >
+                  {chatLoading ? 'Thinking...' : 'Send'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
