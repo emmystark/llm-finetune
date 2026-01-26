@@ -23,15 +23,15 @@ interface UserProfile {
   telegramUsername: string;
 }
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://sentinel-backend-sepia.vercel.app';
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
 export default function Dashboard() {
   const [activeModal, setActiveModal] = useState<string | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile>({
-    name: 'John Doe',
-    email: 'john.doe@example.com',
+    name: 'user',
+    email: 'user@example.com',
     monthlyIncome: 300000,
     fixedBills: 100000,
     savingsGoal: 50000,
@@ -115,27 +115,45 @@ export default function Dashboard() {
     }
   };
 
-  // Financial advisor chatbot
+  // Financial advisor chatbot - Enhanced handler
   const handleChatSubmit = async () => {
-    if (!chatInput.trim()) return;
+    if (!chatInput.trim() || chatLoading) return;
 
     const userMessage = chatInput;
     setChatInput('');
+    
+    // Add user message immediately for responsiveness
     setChatMessages(prev => [...prev, { role: 'user', content: userMessage }]);
     setChatLoading(true);
 
     try {
-      const categoryTotals = calculateCategoryTotals();
+      // Send request with all available data
       const response = await apiCall('/api/ai/chat', 'POST', {
         message: userMessage,
-        transactions,
+        transactions: transactions,
         monthlyIncome: userProfile.monthlyIncome
       });
 
-      setChatMessages(prev => [...prev, { role: 'advisor', content: response.advice }]);
+      if (response.success && response.advice) {
+        // Add advisor response
+        setChatMessages(prev => [...prev, { 
+          role: 'advisor', 
+          content: response.advice,
+          duration: response.duration
+        }]);
+      } else {
+        setChatMessages(prev => [...prev, { 
+          role: 'advisor', 
+          content: '❌ ' + (response.error || 'Could not generate advice. Try again.')
+        }]);
+      }
     } catch (err) {
-      console.error('Failed to get advice:', err);
-      setChatMessages(prev => [...prev, { role: 'advisor', content: 'Sorry, I could not generate advice at this time. Please try again.' }]);
+      const errorMsg = err instanceof Error ? err.message : 'Network error';
+      console.error('Chat error:', err);
+      setChatMessages(prev => [...prev, { 
+        role: 'advisor', 
+        content: `⚠️ Error: ${errorMsg}. Please try again.`
+      }]);
     } finally {
       setChatLoading(false);
     }
@@ -197,7 +215,7 @@ export default function Dashboard() {
         let base64 = reader.result as string;
         
         // Compress image if it's too large
-        if (base64.length > 2000000) {
+        if (base64.length > 5000000) {
           try {
             base64 = await compressImage(base64);
           } catch (err) {
@@ -962,7 +980,7 @@ export default function Dashboard() {
             </div>
             <div className={styles.modalBody}>
               {/* Receipt Upload Section */}
-              <div style={{ marginBottom: '20px', padding: '15px', backgroundColor: 'rgba(74, 222, 128, 0.1)', borderRadius: '8px', border: '2px dashed #4ade80' }}>
+              {/* <div style={{ marginBottom: '20px', padding: '15px', backgroundColor: 'rgba(74, 222, 128, 0.1)', borderRadius: '8px', border: '2px dashed #4ade80' }}>
                 <h3 style={{ marginTop: 0, color: '#4ade80' }}>Scan Receipt (Optional)</h3>
                 <p style={{ fontSize: '14px', color: '#aaa' }}>Upload a bank receipt or receipt image - AI will extract merchant, amount, and category</p>
                 
@@ -996,7 +1014,7 @@ export default function Dashboard() {
                     Scanning receipt...
                   </div>
                 )}
-              </div>
+              </div> */}
 
               {/* Or Manual Entry Section */}
               <div style={{ marginBottom: '10px', padding: '10px 0', textAlign: 'center', color: '#888', fontSize: '14px' }}>
@@ -1063,75 +1081,250 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Financial Advisor Chatbot Modal */}
+      {/* Financial Advisor Chatbot Modal - Dynamic */}
       {activeModal === 'chatbot' && (
         <div className={styles.modalOverlay} onClick={closeModal}>
           <div className={`${styles.modal} ${styles.wideModal}`} onClick={(e) => e.stopPropagation()}>
             <div className={styles.modalHeader}>
-              <h2>Financial Advisor</h2>
+              <div>
+                <h2 style={{ margin: '0 0 4px 0' }}>Sentinel Financial Advisor</h2>
+                <p style={{ margin: 0, fontSize: '12px', color: '#888' }}>AI-powered personalized financial guidance</p>
+              </div>
               <button className={styles.closeButton} onClick={closeModal}>✕</button>
             </div>
-            <div className={styles.modalBody} style={{ display: 'flex', flexDirection: 'column', height: '400px' }}>
-              <div style={{ flex: 1, overflowY: 'auto', marginBottom: '15px', padding: '10px', backgroundColor: '#1a1f2e', borderRadius: '8px' }}>
+            
+            <div className={styles.modalBody} style={{ display: 'flex', flexDirection: 'column', height: '550px' }}>
+              
+              {/* Quick Stats Bar */}
+              {transactions.length > 0 && (
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr 1fr',
+                  gap: '10px',
+                  marginBottom: '12px',
+                  padding: '12px',
+                  backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                  borderRadius: '6px',
+                  border: '1px solid rgba(59, 130, 246, 0.3)'
+                }}>
+                  <div style={{ textAlign: 'center', fontSize: '12px' }}>
+                    <div style={{ color: '#3b82f6', fontWeight: 'bold', fontSize: '14px' }}>
+                      {transactions.length}
+                    </div>
+                    <div style={{ color: '#888', marginTop: '2px' }}>Transactions</div>
+                  </div>
+                  <div style={{ textAlign: 'center', fontSize: '12px' }}>
+                    <div style={{ color: '#10b981', fontWeight: 'bold', fontSize: '14px' }}>
+                      ₦{(transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0) / 1000).toFixed(0)}k
+                    </div>
+                    <div style={{ color: '#888', marginTop: '2px' }}>Spending</div>
+                  </div>
+                  <div style={{ textAlign: 'center', fontSize: '12px' }}>
+                    <div style={{ 
+                      color: (transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0) / userProfile.monthlyIncome) > 0.8 ? '#ef4444' : '#f59e0b', 
+                      fontWeight: 'bold', 
+                      fontSize: '14px' 
+                    }}>
+                      {((transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0) / userProfile.monthlyIncome) * 100).toFixed(0)}%
+                    </div>
+                    <div style={{ color: '#888', marginTop: '2px' }}>of Income</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Messages Container */}
+              <div style={{ 
+                flex: 1, 
+                overflowY: 'auto', 
+                marginBottom: '12px', 
+                padding: '12px',
+                backgroundColor: '#0f172a',
+                borderRadius: '8px',
+                display: 'flex',
+                flexDirection: 'column'
+              }}>
+                
                 {chatMessages.length === 0 ? (
-                  <div style={{ color: '#888', textAlign: 'center', paddingTop: '20px' }}>
-                    <p>Start a conversation about your finances!</p>
-                    <p style={{ fontSize: '12px' }}>Ask about budgeting, saving, or spending advice.</p>
+                  <div style={{ 
+                    margin: 'auto',
+                    textAlign: 'center',
+                    color: '#888'
+                  }}>
+                    <div style={{ fontSize: '24px', marginBottom: '12px' }}>💬</div>
+                    <p style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>
+                      Sentinel Financial Advisor
+                    </p>
+                    <p style={{ fontSize: '12px', marginBottom: '16px', color: '#666' }}>
+                      Ask me anything about your spending habits!
+                    </p>
+                    <div style={{ 
+                      display: 'flex', 
+                      flexDirection: 'column', 
+                      gap: '6px',
+                      fontSize: '12px',
+                      color: '#60a5fa'
+                    }}>
+                      <p>📊 "How can I save more?"</p>
+                      <p>📈 "Is my food spending high?"</p>
+                      <p>💰 "Where should I cut back?"</p>
+                      <p>🎯 "What's my spending ratio?"</p>
+                    </div>
                   </div>
                 ) : (
-                  chatMessages.map((msg, idx) => (
-                    <div key={idx} style={{ marginBottom: '10px', display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
-                      <div style={{
-                        maxWidth: '70%',
-                        padding: '10px 12px',
-                        borderRadius: '8px',
-                        backgroundColor: msg.role === 'user' ? '#3b82f6' : '#374151',
-                        color: '#fff',
-                        fontSize: '14px',
-                        lineHeight: '1.4'
+                  <>
+                    {chatMessages.map((msg, idx) => (
+                      <div key={idx} style={{ 
+                        marginBottom: '10px', 
+                        display: 'flex', 
+                        justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                        alignItems: 'flex-end',
+                        gap: '8px'
                       }}>
-                        {msg.content}
+                        {msg.role === 'advisor' && (
+                          <div style={{
+                            width: '24px',
+                            height: '24px',
+                            borderRadius: '50%',
+                            backgroundColor: '#3b82f6',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '12px',
+                            flexShrink: 0
+                          }}>
+                            ★
+                          </div>
+                        )}
+                        <div style={{
+                          maxWidth: '75%',
+                          padding: '10px 13px',
+                          borderRadius: msg.role === 'user' ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
+                          backgroundColor: msg.role === 'user' ? '#3b82f6' : '#1e293b',
+                          color: msg.role === 'user' ? '#fff' : '#e2e8f0',
+                          fontSize: '13px',
+                          lineHeight: '1.5',
+                          wordBreak: 'break-word',
+                          border: msg.role === 'advisor' ? '1px solid #334155' : 'none'
+                        }}>
+                          {msg.content}
+                        </div>
+                        {msg.role === 'user' && (
+                          <div style={{
+                            width: '24px',
+                            height: '24px',
+                            borderRadius: '50%',
+                            backgroundColor: '#3b82f6',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '12px',
+                            flexShrink: 0
+                          }}>
+                            👤
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))
+                    ))}
+                    
+                    {chatLoading && (
+                      <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'flex-end', gap: '8px', marginTop: '10px' }}>
+                        <div style={{
+                          width: '24px',
+                          height: '24px',
+                          borderRadius: '50%',
+                          backgroundColor: '#3b82f6',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '12px'
+                        }}>
+                          ★
+                        </div>
+                        <div style={{
+                          padding: '10px 13px',
+                          borderRadius: '18px 18px 18px 4px',
+                          backgroundColor: '#1e293b',
+                          color: '#60a5fa',
+                          fontSize: '13px',
+                          border: '1px solid #334155'
+                        }}>
+                          <span style={{ display: 'inline-flex', gap: '3px' }}>
+                            <span style={{ animation: 'pulse 1s infinite', opacity: 0.7 }}>●</span>
+                            <span style={{ animation: 'pulse 1s infinite 0.2s', opacity: 0.7 }}>●</span>
+                            <span style={{ animation: 'pulse 1s infinite 0.4s', opacity: 0.7 }}>●</span>
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
 
+              {/* Input Area - Dynamic */}
               <div style={{ display: 'flex', gap: '8px' }}>
                 <input
                   type="text"
-                  placeholder="Ask for financial advice..."
+                  placeholder={chatLoading ? 'Waiting for response...' : 'Ask Sentinel about your finances...'}
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleChatSubmit()}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter' && !chatLoading && chatInput.trim()) {
+                      handleChatSubmit();
+                    }
+                  }}
                   disabled={chatLoading}
                   style={{
                     flex: 1,
-                    padding: '10px 12px',
+                    padding: '11px 14px',
                     borderRadius: '8px',
-                    border: 'none',
-                    backgroundColor: '#2d3748',
+                    border: '1px solid #334155',
+                    backgroundColor: '#1e293b',
                     color: '#fff',
-                    fontSize: '14px'
+                    fontSize: '13px',
+                    fontFamily: 'inherit',
+                    outline: 'none',
+                    transition: 'all 0.2s'
+                  }}
+                  onFocus={(e) => {
+                    e.currentTarget.style.borderColor = '#3b82f6';
+                    e.currentTarget.style.backgroundColor = '#0f172a';
+                  }}
+                  onBlur={(e) => {
+                    e.currentTarget.style.borderColor = '#334155';
+                    e.currentTarget.style.backgroundColor = '#1e293b';
                   }}
                 />
                 <button
                   onClick={handleChatSubmit}
                   disabled={chatLoading || !chatInput.trim()}
                   style={{
-                    padding: '10px 16px',
+                    padding: '11px 20px',
                     borderRadius: '8px',
                     border: 'none',
-                    backgroundColor: chatLoading ? '#4b5563' : '#3b82f6',
+                    backgroundColor: chatLoading || !chatInput.trim() ? '#334155' : '#3b82f6',
                     color: '#fff',
-                    cursor: chatLoading ? 'not-allowed' : 'pointer',
-                    fontSize: '14px',
-                    fontWeight: 'bold'
+                    cursor: chatLoading || !chatInput.trim() ? 'not-allowed' : 'pointer',
+                    fontSize: '13px',
+                    fontWeight: 'bold',
+                    transition: 'all 0.2s',
+                    opacity: chatLoading || !chatInput.trim() ? 0.6 : 1
                   }}
                 >
-                  {chatLoading ? 'Thinking...' : 'Send'}
+                  {chatLoading ? '⏳' : '→'}
                 </button>
               </div>
+
+              {/* Footer Info */}
+              {chatMessages.length > 0 && (
+                <div style={{ 
+                  marginTop: '8px',
+                  fontSize: '11px',
+                  color: '#666',
+                  textAlign: 'center'
+                }}>
+                  💡 Advice based on {transactions.length} transactions
+                </div>
+              )}
             </div>
           </div>
         </div>
